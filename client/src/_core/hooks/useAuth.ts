@@ -1,0 +1,119 @@
+import { startLogin } from "@/const";
+import { trpc } from "@/lib/trpc";
+import { TRPCClientError } from "@trpc/client";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+const LOCAL_AUTH_KEY = "study-manager-local-auth";
+
+type UseAuthOptions = {
+  redirectOnUnauthenticated?: boolean;
+  redirectPath?: string;
+};
+
+export function useAuth(options?: UseAuthOptions) {
+  // Login is started via startLogin() in the effect below, only when we actually
+  // navigate — never during render. startLogin() mints a one-time nonce + writes
+  // the state cookie, so calling it per render would overwrite the cookie and
+  // desync it from an in-flight login's `state`.
+  const { redirectOnUnauthenticated = false, redirectPath } = options ?? {};
+  const utils = trpc.useUtils();
+  const [localUser, setLocalUser] = useState<null>(null);
+  const localLoginMutation = trpc.auth.localLogin.useMutation({
+    onSuccess: async () => {
+      localStorage.removeItem(LOCAL_AUTH_KEY);
+      await utils.auth.me.invalidate();
+    },
+  });
+  const loginLocal = useCallback((email: string, name: string) => {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail) return;
+    localLoginMutation.mutate({ email: normalizedEmail, name: name.trim() });
+  }, [localLoginMutation]);
+
+  const meQuery = trpc.auth.me.useQuery(undefined, {
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+
+  const logoutMutation = trpc.auth.logout.useMutation({
+    onSuccess: () => {
+      utils.auth.me.setData(undefined, null);
+    },
+  });
+
+  const logout = useCallback(async () => {
+    try {
+      await logoutMutation.mutateAsync();
+    } catch (error: unknown) {
+      if (
+        error instanceof TRPCClientError &&
+        error.data?.code === "UNAUTHORIZED"
+      ) {
+        return;
+      }
+      throw error;
+    } finally {
+      // Clear the Preview auto-login token mirrored into sessionStorage, so
+      // header-based sessions (Safari ITP / WebView) are logged out too. The
+      // backend cookie is cleared by the logout mutation.
+      try {
+        sessionStorage.removeItem("manus-cookie");
+        localStorage.removeItem(LOCAL_AUTH_KEY);
+      } catch {}
+      setLocalUser(null);
+      utils.auth.me.setData(undefined, null);
+      await utils.auth.me.invalidate();
+    }
+  }, [logoutMutation, utils]);
+
+  const state = useMemo(() => {
+    localStorage.setItem(
+      "manus-runtime-user-info",
+      JSON.stringify(meQuery.data)
+    );
+    const user = meQuery.data ?? localUser;
+    return {
+      user,
+      loading: localLoginMutation.isPending || meQuery.isLoading || logoutMutation.isPending,
+      error: meQuery.error ?? logoutMutation.error ?? null,
+      isAuthenticated: Boolean(user),
+      localMode: Boolean(localUser),
+    };
+  }, [
+    meQuery.data,
+    localUser,
+    meQuery.error,
+    meQuery.isLoading,
+    logoutMutation.error,
+    logoutMutation.isPending,
+    localLoginMutation.isPending,
+  ]);
+
+  useEffect(() => {
+    if (!redirectOnUnauthenticated) return;
+    if (meQuery.isLoading || logoutMutation.isPending) return;
+    if (state.user) return;
+    if (typeof window === "undefined") return;
+    if (redirectPath && window.location.pathname === redirectPath) return;
+
+    // Navigate at this moment only. startLogin() mints the nonce + cookie itself.
+    if (redirectPath) {
+      window.location.href = redirectPath;
+    } else {
+      startLogin();
+    }
+  }, [
+    redirectOnUnauthenticated,
+    redirectPath,
+    logoutMutation.isPending,
+    meQuery.isLoading,
+    state.user,
+  ]);
+
+  return {
+    ...state,
+    refresh: () => meQuery.refetch(),
+    logout,
+    loginLocal,
+  };
+}

@@ -1,0 +1,1 @@
+﻿require('dotenv').config(); const {Client}=require('pg'); (async()=>{const c=new Client({connectionString:process.env.DATABASE_URL}); await c.connect(); await c.query("delete from users where email like 'lan-auth-check-%@example.com'"); await c.end(); console.log('temporary auth user removed');})();

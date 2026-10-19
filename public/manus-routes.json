@@ -1,0 +1,1 @@
+{"routes":[{"path":"/","title":"Study Manager"},{"path":"/plans","title":"計画・カレンダー"},{"path":"/tasks","title":"課題・提出物"},{"path":"/timer","title":"勉強時間"},{"path":"/exams","title":"テスト・成績"},{"path":"/weaknesses","title":"苦手・復習"},{"path":"/goals","title":"目標・振り返り"},{"path":"/parent","title":"保護者共有"},{"path":"/settings","title":"設定・データ"}]}
