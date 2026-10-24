@@ -55,8 +55,8 @@ export function registerOAuthRoutes(app: Express) {
     let stage = "token exchange";
     try {
       const tokenResponse = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ code, client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, redirect_uri: googleRedirectUri(req), grant_type: "authorization_code" }) });
-      if (!tokenResponse.ok) throw new Error("Google token exchange failed");
-      const token = await tokenResponse.json() as { access_token?: string };
+      const token = await tokenResponse.json() as { access_token?: string; error?: string; error_description?: string };
+      if (!tokenResponse.ok) throw new Error(`Google token exchange failed: ${token.error ?? tokenResponse.status} ${token.error_description ?? ""}`.trim());
       if (!token.access_token) throw new Error("Google access token missing");
       stage = "userinfo request";
       const userResponse = await fetch("https://openidconnect.googleapis.com/v1/userinfo", { headers: { Authorization: `Bearer ${token.access_token}` } });
