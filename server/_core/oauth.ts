@@ -52,22 +52,26 @@ export function registerOAuthRoutes(app: Express) {
     if (!googleConfigured() || !code || !state || !savedState) { res.status(400).send("Googleログインの設定または認証情報が不足しています。"); return; }
     const a = Buffer.from(state); const b = Buffer.from(savedState);
     if (a.length !== b.length || !timingSafeEqual(a, b)) { res.status(403).send("Googleログインの状態確認に失敗しました。"); return; }
+    let stage = "token exchange";
     try {
       const tokenResponse = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ code, client_id: process.env.GOOGLE_CLIENT_ID!, client_secret: process.env.GOOGLE_CLIENT_SECRET!, redirect_uri: googleRedirectUri(req), grant_type: "authorization_code" }) });
       if (!tokenResponse.ok) throw new Error("Google token exchange failed");
       const token = await tokenResponse.json() as { access_token?: string };
       if (!token.access_token) throw new Error("Google access token missing");
+      stage = "userinfo request";
       const userResponse = await fetch("https://openidconnect.googleapis.com/v1/userinfo", { headers: { Authorization: `Bearer ${token.access_token}` } });
       if (!userResponse.ok) throw new Error("Google userinfo failed");
       const googleUser = await userResponse.json() as { sub?: string; email?: string; name?: string };
       if (!googleUser.sub || !googleUser.email) throw new Error("Google profile is incomplete");
       const openId = `google:${googleUser.sub}`;
       const name = googleUser.name || googleUser.email.split("@")[0];
+      stage = "database upsert";
       await db.upsertUser({ openId, email: googleUser.email, name, loginMethod: "google", lastSignedIn: new Date() });
+      stage = "session creation";
       const sessionToken = await sdk.createSessionToken(openId, { name, expiresInMs: ONE_YEAR_MS });
       res.cookie(COOKIE_NAME, sessionToken, { ...getSessionCookieOptions(req), maxAge: ONE_YEAR_MS });
       res.redirect("/");
-    } catch (error) { console.error("[Google OAuth] Callback failed", error instanceof Error ? error.message : "unknown error"); res.status(502).send("Googleログインに失敗しました。設定とリダイレクトURLを確認してください。"); }
+    } catch (error) { console.error(`[Google OAuth] Callback failed at ${stage}:`, error instanceof Error ? error.message : "unknown error"); res.status(502).send(`Googleログインに失敗しました（${stage}）。設定とリダイレクトURLを確認してください。`); }
   });
 
   app.get("/api/oauth/callback", async (req: Request, res: Response) => {
