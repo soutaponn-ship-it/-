@@ -56,6 +56,7 @@ export default function Home() {
   const [globalSearch, setGlobalSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [entryRole, setEntryRole] = useState<"student" | "parent">(() => (localStorage.getItem("study-manager-entry-role") as "student" | "parent") || "student");
+  const [pendingInviteAttempted, setPendingInviteAttempted] = useState(false);
   const [showTask, setShowTask] = useState(false);
   const [showPlan, setShowPlan] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
@@ -86,6 +87,12 @@ export default function Home() {
   useEffect(() => { if (hydratedKey !== userKey) { setData(load(userKey)); setHydratedKey(userKey); } }, [hydratedKey, userKey]);
   useEffect(() => { if (!auth.user || localMode || !serverData.isSuccess || serverHydratedFor === userKey) return; if (serverData.data) { const restored = cleanLoadedStore(serverData.data as Store); setData(restored); localStorage.setItem(userKey, JSON.stringify(restored)); } setServerHydratedFor(userKey); }, [auth.user, localMode, serverData.data, serverData.isSuccess, serverHydratedFor, userKey]);
   const isParentViewer = Boolean(auth.user && parentLinks.data?.some((link: any) => link.parentId === auth.user?.id && link.status === "active"));
+  useEffect(() => {
+    const pendingInvite = localStorage.getItem("study-manager-pending-invite");
+    if (!auth.user || entryRole !== "parent" || !pendingInvite || pendingInviteAttempted || !parentLinks.isSuccess) return;
+    setPendingInviteAttempted(true);
+    redeemInvite.mutate({ code: pendingInvite }, { onSuccess: () => { localStorage.removeItem("study-manager-pending-invite"); parentLinks.refetch(); setNotice("招待コードで連携しました"); }, onError: () => { localStorage.removeItem("study-manager-pending-invite"); setNotice("招待コードを確認できませんでした。保護者共有画面から再入力してください"); } });
+  }, [auth.user, entryRole, parentLinks.isSuccess, pendingInviteAttempted]);
   useEffect(() => { if (!isParentViewer || !sharedStudy.isSuccess || !sharedStudy.data?.payload || sharedHydratedFor === userKey) return; try { setData(cleanLoadedStore(JSON.parse(sharedStudy.data.payload) as Store)); setSharedHydratedFor(userKey); setNotice("共有データを読み込みました"); } catch { setNotice("共有データを読み込めませんでした"); } }, [isParentViewer, sharedStudy.data, sharedStudy.isSuccess, sharedHydratedFor, userKey]);
   useEffect(() => { if (hydratedKey !== userKey) return; localStorage.setItem(userKey, JSON.stringify(data)); if (auth.user && !localMode && !isParentViewer && serverHydratedFor === userKey) saveServerData.mutate({ payload: JSON.stringify(data) }); setNotice("保存しました"); const t = setTimeout(() => setNotice("自動保存が有効です"), 1800); return () => clearTimeout(t); }, [data, hydratedKey, userKey, auth.user, localMode, isParentViewer, serverHydratedFor]);
   useEffect(() => { setGoalDraft(data.goal); setReflectionDraft(data.goal.reflection || ""); }, [data.goal.hours, data.goal.score, data.goal.reflection]);
