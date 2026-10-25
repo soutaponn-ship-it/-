@@ -283,7 +283,8 @@ function AnalyticsDashboard({data, period, onPeriodChange, onNavigate}: {data: S
   const subjectMinutes = subjects.map(subject => ({subject, minutes: studies.filter(study => study.subject === subject).reduce((sum, study) => sum + study.minutes, 0)})).filter(item => item.minutes > 0);
   const causeCounts = ["知識不足", "計算ミス", "読み違い", "解き方が分からない", "時間不足", "その他"].map(cause => ({cause, count: data.weaknesses.filter(weakness => weakness.cause === cause).length})).filter(item => item.count > 0);
   const trend = [...data.exams].filter(exam => exam.date <= range.end).sort((a, b) => a.date.localeCompare(b.date)).slice(-6).map(exam => ({name: exam.name.length > 8 ? `${exam.name.slice(0, 8)}…` : exam.name, date: exam.date.slice(5), score: Math.round((Object.values(exam.scores).reduce((sum, score) => sum + score, 0) / Math.max(1, Object.keys(exam.scores).length * exam.max)) * 100)}));
-  const hasLinkedStudyData = studies.some(study => Boolean((study as Study & {planId?: string}).planId));\n  const weeklyRate = hasLinkedStudyData && plannedMinutes > 0 ? Math.round((completedPlanMinutes / plannedMinutes) * 100) : null;
+  const hasLinkedStudyData = studies.some(study => Boolean((study as Study & {planId?: string}).planId));
+  const weeklyRate = hasLinkedStudyData && plannedMinutes > 0 ? Math.round((completedPlanMinutes / plannedMinutes) * 100) : null;
   const suggestions = [
     dueReviews.length ? {title: "期限を過ぎた復習から始める", reason: `${dueReviews.length}件の復習予定が今日以前です。`, action: () => onNavigate("weaknesses")} : null,
     overdueTasks.length ? {title: "期限超過の課題を整理する", reason: `${overdueTasks.length}件の未完了課題があります。`, action: () => onNavigate("tasks")} : null,
