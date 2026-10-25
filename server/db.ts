@@ -61,6 +61,12 @@ export async function updateUserName(userId: number, name: string) {
   return (await db.select().from(users).where(eq(users.id, userId)).limit(1))[0];
 }
 
+export async function hasActiveParentLink(parentId: number) {
+  const db = await getDb();
+  if (!db) return false;
+  const result = await db.select({ id: parentLinks.id }).from(parentLinks).where(and(eq(parentLinks.parentId, parentId), eq(parentLinks.status, "active"))).limit(1);
+  return Boolean(result[0]);
+}
 export async function getStudyData(userId: number) {
   const db = await getDb();
   if (!db) return undefined;

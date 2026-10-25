@@ -29,8 +29,23 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 const today = new Date().toISOString().slice(0, 10);
 const formatDate = (iso: string) => new Intl.DateTimeFormat("ja-JP", { month: "long", day: "numeric", weekday: "short" }).format(new Date(`${iso}T00:00:00`));
 const isLegacySeed = (value: Store) => ["t1", "t2", "t3", "p1", "p2", "p3", "e1", "e2", "w1", "w2", "s1", "s2", "s3"].some(id => [...value.tasks, ...value.plans, ...value.exams, ...value.weaknesses, ...value.studies].some((item: any) => item.id === id));
-const cleanLoadedStore = (value: Store): Store => isLegacySeed(value) ? initial : value;
-const load = (key: string): Store => { try { const parsed = JSON.parse(localStorage.getItem(key) || "null") as Store | null; return parsed ? cleanLoadedStore(parsed) : initial; } catch { return initial; } };
+const isRecord = (value: unknown): value is Record<string, any> => Boolean(value && typeof value === "object" && !Array.isArray(value));
+const validDate = (value: unknown) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+const cleanLoadedStore = (value: unknown): Store => {
+  if (!isRecord(value) || !Array.isArray(value.tasks) || !Array.isArray(value.plans) || !Array.isArray(value.exams) || !Array.isArray(value.weaknesses) || !Array.isArray(value.studies) || !isRecord(value.goal)) return initial;
+  const ids = [...value.tasks, ...value.plans, ...value.exams, ...value.weaknesses, ...value.studies].map((item: any) => item?.id).filter(Boolean);
+  if (new Set(ids).size !== ids.length) return initial;
+  const safe = {
+    tasks: value.tasks.filter((item: any) => item && typeof item.id === "string" && typeof item.title === "string" && validDate(item.due) && Number.isFinite(Number(item.minutes))).map((item: any) => ({ ...item, minutes: Math.max(0, Number(item.minutes)), done: Boolean(item.done) })),
+    plans: value.plans.filter((item: any) => item && typeof item.id === "string" && typeof item.content === "string" && validDate(item.date) && Number.isFinite(Number(item.minutes))).map((item: any) => ({ ...item, minutes: Math.max(0, Number(item.minutes)), done: Boolean(item.done) })),
+    exams: value.exams.filter((item: any) => item && typeof item.id === "string" && typeof item.name === "string" && validDate(item.date) && isRecord(item.scores)).map((item: any) => ({ ...item, max: Math.max(1, Number(item.max) || 100), scores: Object.fromEntries(Object.entries(item.scores).filter(([, score]) => Number.isFinite(Number(score))).map(([subject, score]) => [subject, Math.max(0, Number(score))])) })),
+    weaknesses: value.weaknesses.filter((item: any) => item && typeof item.id === "string" && typeof item.unit === "string" && validDate(item.review)).map((item: any) => ({ ...item, done: Boolean(item.done) })),
+    studies: value.studies.filter((item: any) => item && typeof item.id === "string" && validDate(item.date) && Number.isFinite(Number(item.minutes))).map((item: any) => ({ ...item, minutes: Math.max(0, Number(item.minutes)) })),
+    goal: { hours: Math.max(1, Number(value.goal.hours) || 1), score: Math.max(0, Number(value.goal.score) || 0), reflection: typeof value.goal.reflection === "string" ? value.goal.reflection : "" },
+  } as Store;
+  return isLegacySeed(safe) ? initial : safe;
+};
+const load = (key: string): Store => { try { return cleanLoadedStore(JSON.parse(localStorage.getItem(key) || "null")); } catch { return initial; } };
 
 export default function Home() {
   const auth = useAuth();
@@ -42,7 +57,7 @@ export default function Home() {
   const [sharedHydratedFor, setSharedHydratedFor] = useState<string | null>(null);
   const updateName = trpc.profile.updateName.useMutation({ onSuccess: () => auth.refresh() });
   const serverData = trpc.study.load.useQuery(undefined, { enabled: Boolean(auth.user) && !localMode, retry: false });
-  const saveServerData = trpc.study.save.useMutation();
+  const saveServerData = trpc.study.save.useMutation({ onSuccess: () => { setNotice("クラウドに保存しました"); window.setTimeout(() => setNotice("自動保存が有効です"), 1800); }, onError: () => setNotice("クラウド保存に失敗しました。通信状態を確認してください") });
   const parentLinks = trpc.parent.list.useQuery(undefined, { enabled: Boolean(auth.user) && !localMode, retry: false, refetchOnWindowFocus: true, refetchInterval: 5000 });
   const sharedStudy = trpc.parent.sharedStudy.useQuery(undefined, { enabled: Boolean(auth.user) && !localMode, retry: false, refetchOnWindowFocus: true, refetchInterval: 5000 });
   const createInvite = trpc.parent.createInvite.useMutation({ onSuccess: () => parentLinks.refetch() });
@@ -85,7 +100,7 @@ export default function Home() {
   }, []);
   useEffect(() => { if (!timerRunning) return; const timer = window.setInterval(() => setTimerSeconds(seconds => { if (seconds <= 1) { setTimerRunning(false); setNotice("集中時間が終わりました。勉強時間を記録しましょう"); return 25 * 60; } return seconds - 1; }), 1000); return () => window.clearInterval(timer); }, [timerRunning]);
   useEffect(() => { if (hydratedKey !== userKey) { setData(load(userKey)); setHydratedKey(userKey); } }, [hydratedKey, userKey]);
-  useEffect(() => { if (!auth.user || localMode || !serverData.isSuccess || serverHydratedFor === userKey) return; if (serverData.data) { const restored = cleanLoadedStore(serverData.data as Store); setData(restored); localStorage.setItem(userKey, JSON.stringify(restored)); } setServerHydratedFor(userKey); }, [auth.user, localMode, serverData.data, serverData.isSuccess, serverHydratedFor, userKey]);
+  useEffect(() => { if (!auth.user || localMode || !serverData.isSuccess || serverHydratedFor === userKey) return; if (serverData.data) { const restored = cleanLoadedStore(serverData.data); setData(restored); localStorage.setItem(userKey, JSON.stringify(restored)); } setServerHydratedFor(userKey); }, [auth.user, localMode, serverData.data, serverData.isSuccess, serverHydratedFor, userKey]);
   const isParentViewer = Boolean(auth.user && parentLinks.data?.some((link: any) => link.parentId === auth.user?.id && link.status === "active"));
   useEffect(() => {
     const pendingInvite = localStorage.getItem("study-manager-pending-invite");
@@ -93,8 +108,8 @@ export default function Home() {
     setPendingInviteAttempted(true);
     redeemInvite.mutate({ code: pendingInvite }, { onSuccess: () => { localStorage.removeItem("study-manager-pending-invite"); parentLinks.refetch(); setNotice("招待コードで連携しました"); }, onError: () => { localStorage.removeItem("study-manager-pending-invite"); setNotice("招待コードを確認できませんでした。保護者共有画面から再入力してください"); } });
   }, [auth.user, entryRole, parentLinks.isSuccess, pendingInviteAttempted]);
-  useEffect(() => { if (!isParentViewer || !sharedStudy.isSuccess || !sharedStudy.data?.payload || sharedHydratedFor === userKey) return; try { setData(cleanLoadedStore(JSON.parse(sharedStudy.data.payload) as Store)); setSharedHydratedFor(userKey); setNotice("共有データを読み込みました"); } catch { setNotice("共有データを読み込めませんでした"); } }, [isParentViewer, sharedStudy.data, sharedStudy.isSuccess, sharedHydratedFor, userKey]);
-  useEffect(() => { if (hydratedKey !== userKey) return; localStorage.setItem(userKey, JSON.stringify(data)); if (auth.user && !localMode && !isParentViewer && serverHydratedFor === userKey) saveServerData.mutate({ payload: JSON.stringify(data) }); setNotice("保存しました"); const t = setTimeout(() => setNotice("自動保存が有効です"), 1800); return () => clearTimeout(t); }, [data, hydratedKey, userKey, auth.user, localMode, isParentViewer, serverHydratedFor]);
+  useEffect(() => { if (!isParentViewer || !sharedStudy.isSuccess || !sharedStudy.data?.payload || sharedHydratedFor === userKey) return; try { setData(cleanLoadedStore(JSON.parse(sharedStudy.data.payload))); setSharedHydratedFor(userKey); setNotice("共有データを読み込みました"); } catch { setNotice("共有データを読み込めませんでした"); } }, [isParentViewer, sharedStudy.data, sharedStudy.isSuccess, sharedHydratedFor, userKey]);
+  useEffect(() => { if (hydratedKey !== userKey) return; localStorage.setItem(userKey, JSON.stringify(data)); if (auth.user && !localMode && !isParentViewer && serverHydratedFor === userKey) saveServerData.mutate({ payload: JSON.stringify(data) }); setNotice(auth.user && !localMode && !isParentViewer && serverHydratedFor === userKey ? "保存中…" : "保存しました"); }, [data, hydratedKey, userKey, auth.user, localMode, isParentViewer, serverHydratedFor]);
   useEffect(() => { setGoalDraft(data.goal); setReflectionDraft(data.goal.reflection || ""); }, [data.goal.hours, data.goal.score, data.goal.reflection]);
   if (auth.loading) return <LoadingScreen />;
   if (!auth.isAuthenticated || !auth.user) return <LoginScreen onLogin={(role) => { localStorage.setItem("study-manager-entry-role", role); setEntryRole(role); startLogin(); }} onLocalLogin={(email, name, role, inviteCode) => { localStorage.setItem("study-manager-entry-role", role); if (inviteCode) localStorage.setItem("study-manager-pending-invite", inviteCode); setEntryRole(role); auth.loginLocal(email, name); }} />;
@@ -131,7 +146,7 @@ export default function Home() {
   const savePlan = (draft: Omit<Plan, "id" | "done">) => { update({ plans: editingPlan ? data.plans.map(item => item.id === editingPlan.id ? { ...item, ...draft } : item) : [...data.plans, { ...draft, id: uid(), done: false }] }); setEditingPlan(null); setShowPlan(false); setNotice("計画を保存しました"); };
   const exportData = () => { const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "study-manager-backup.json"; a.click(); setNotice("バックアップを書き出しました"); };
   const printReport = () => { setNotice("印刷画面を開いています"); window.setTimeout(() => window.print(), 50); };
-  const importData = async (file?: File) => { if (!file) return; try { const parsed = JSON.parse(await file.text()) as Store; if (!parsed || !Array.isArray(parsed.tasks) || !Array.isArray(parsed.plans) || !Array.isArray(parsed.exams) || !Array.isArray(parsed.weaknesses) || !Array.isArray(parsed.studies) || !parsed.goal) throw new Error("invalid"); if (!confirm("現在のデータをバックアップ内容で置き換えますか？")) return; update(parsed); setNotice("バックアップを復元しました"); } catch { setNotice("復元できないファイルです"); } finally { if (importRef.current) importRef.current.value = ""; } };
+  const importData = async (file?: File) => { if (!file) return; try { const raw = JSON.parse(await file.text()); const restored = cleanLoadedStore(raw); if (restored === initial && JSON.stringify(raw) !== JSON.stringify(initial)) throw new Error("invalid"); if (!confirm("現在のデータをバックアップ内容で置き換えますか？")) return; update(restored); setNotice("バックアップを検証して復元しました"); } catch { setNotice("復元できないファイルです。JSON形式・必須項目・重複IDを確認してください"); } finally { if (importRef.current) importRef.current.value = ""; } };
   const normalizeSearch = (value: unknown) => String(value ?? "").normalize("NFKC").replace(/\s+/g, "").toLocaleLowerCase();
   const searchQuery = normalizeSearch(search);
   const globalQuery = normalizeSearch(globalSearch);

@@ -47,7 +47,10 @@ export const appRouter = router({
     }),
     save: protectedProcedure
       .input(z.object({ payload: z.string().max(200_000) }))
-      .mutation(async ({ ctx, input }) => db.saveStudyData(ctx.user.id, input.payload)),
+      .mutation(async ({ ctx, input }) => {
+        if (await db.hasActiveParentLink(ctx.user.id)) throw new TRPCError({ code: "FORBIDDEN", message: "保護者アカウントは共有データを変更できません" });
+        return db.saveStudyData(ctx.user.id, input.payload);
+      }),
   }),
 
   parent: router({
